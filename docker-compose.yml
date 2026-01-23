@@ -1,0 +1,16 @@
+version: '3.8'
+
+services:
+  decoder:
+    build: .
+    container_name: ioncube-decoder
+    volumes:
+      # Mount input directory for encrypted files
+      - ./input:/input:ro
+      # Mount output directory for decoded files
+      - ./output:/output
+    # Network disabled for security (malware isolation)
+    network_mode: none
+    # Run decoder on a specific file
+    # Usage: docker-compose run decoder php /decoder/decoder.php /input/file.php /output/decoded.php
+    command: ["php", "/decoder/decoder.php"]

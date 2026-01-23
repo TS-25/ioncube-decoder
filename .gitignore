@@ -1,0 +1,10 @@
+# Ignore decoded files and logs
+output/*
+!output/.gitkeep
+input/*
+!input/.gitkeep
+*.log
+captured_globals.json
+
+# Keep directories
+!.gitkeep
