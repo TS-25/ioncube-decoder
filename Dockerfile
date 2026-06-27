@@ -14,7 +14,9 @@ RUN apt-get update && apt-get install -y \
     git \
     gnupg \
     lsb-release \
-    software-properties-common \
+    autoconf \
+    g++ \
+    make \
     && rm -rf /var/lib/apt/lists/*
 
 # Install PHP extensions and tools for all versions
@@ -60,37 +62,122 @@ RUN set -eux; \
     fi && \
     rm -rf /tmp/ioncube*
 
-# Install compatible uopz extension based on PHP version
+# Install uopz extension with fallback methods
 RUN set -eux; \
     PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;"); \
-    UOPZ_VERSION=""; \
+    UOPZ_INSTALLED=false; \
+    \
+    # Try different installation methods based on PHP version
     case "$PHP_VERSION" in \
-        5.6) UOPZ_VERSION="6.1.2" ;; \
-        7.0|7.1|7.2|7.3|7.4) UOPZ_VERSION="6.1.2" ;; \
-        8.0|8.1) UOPZ_VERSION="7.0.0" ;; \
-        8.2|8.3|8.4|8.5) UOPZ_VERSION="7.1.0" ;; \
-        *) UOPZ_VERSION="6.1.2" ;; \
+        5.6|7.0|7.1|7.2|7.3|7.4) \
+            # Try specific versions for older PHP
+            for VERSION in 6.1.2 6.1.1 6.1.0 6.0.2 6.0.1; do \
+                if pecl install uopz-${VERSION} 2>/dev/null; then \
+                    UOPZ_INSTALLED=true; \
+                    break; \
+                fi; \
+            done; \
+            ;; \
+        8.0|8.1) \
+            for VERSION in 7.0.0 6.1.2 6.1.1; do \
+                if pecl install uopz-${VERSION} 2>/dev/null; then \
+                    UOPZ_INSTALLED=true; \
+                    break; \
+                fi; \
+            done; \
+            ;; \
+        8.2|8.3|8.4|8.5) \
+            for VERSION in 7.1.0 7.0.0; do \
+                if pecl install uopz-${VERSION} 2>/dev/null; then \
+                    UOPZ_INSTALLED=true; \
+                    break; \
+                fi; \
+            done; \
+            ;; \
+        *) \
+            # Try latest stable
+            if pecl install uopz 2>/dev/null; then \
+                UOPZ_INSTALLED=true; \
+            fi; \
+            ;; \
     esac; \
-    if pecl install uopz-${UOPZ_VERSION} 2>/dev/null; then \
+    \
+    # Build from source if PECL fails
+    if [ "$UOPZ_INSTALLED" = false ]; then \
+        echo "Building uopz from source..."; \
+        cd /tmp && \
+        git clone --depth 1 https://github.com/krakjoe/uopz.git || \
+        git clone --depth 1 https://github.com/php-pecl/uopz.git || \
+        wget -q https://github.com/krakjoe/uopz/archive/refs/heads/master.zip -O uopz.zip && \
+        unzip -q uopz.zip && \
+        cd uopz* && \
+        phpize && \
+        ./configure && \
+        make -j$(nproc) && \
+        make install && \
+        UOPZ_INSTALLED=true; \
+    fi; \
+    \
+    if [ "$UOPZ_INSTALLED" = true ]; then \
         echo "extension=uopz.so" > /usr/local/etc/php/conf.d/uopz.ini; \
         echo "uopz.exit=1" >> /usr/local/etc/php/conf.d/uopz.ini; \
+        echo "uopz.overrides=1" >> /usr/local/etc/php/conf.d/uopz.ini; \
     else \
         echo "Warning: uopz installation failed for PHP ${PHP_VERSION}"; \
     fi
 
-# Install compatible runkit7 extension based on PHP version
+# Install runkit7 extension with fallback methods
 RUN set -eux; \
     PHP_VERSION=$(php -r "echo PHP_MAJOR_VERSION . '.' . PHP_MINOR_VERSION;"); \
-    RUNKIT_VERSION=""; \
+    RUNKIT_INSTALLED=false; \
+    \
+    # Try different installation methods based on PHP version
     case "$PHP_VERSION" in \
-        5.6) RUNKIT_VERSION="3.0.1" ;; \
-        7.0|7.1) RUNKIT_VERSION="3.0.1" ;; \
-        7.2|7.3) RUNKIT_VERSION="3.0.2" ;; \
-        7.4) RUNKIT_VERSION="4.0.0a3" ;; \
-        8.0|8.1|8.2|8.3|8.4|8.5) RUNKIT_VERSION="4.0.0a4" ;; \
-        *) RUNKIT_VERSION="3.0.2" ;; \
+        5.6|7.0|7.1|7.2|7.3) \
+            # Try specific versions for older PHP
+            for VERSION in 3.0.1 3.0.0 2.1.0; do \
+                if pecl install runkit7-${VERSION} 2>/dev/null; then \
+                    RUNKIT_INSTALLED=true; \
+                    break; \
+                fi; \
+            done; \
+            ;; \
+        7.4) \
+            for VERSION in 4.0.0a4 4.0.0a3 4.0.0a2; do \
+                if pecl install runkit7-${VERSION} 2>/dev/null; then \
+                    RUNKIT_INSTALLED=true; \
+                    break; \
+                fi; \
+            done; \
+            ;; \
+        8.0|8.1|8.2|8.3|8.4|8.5) \
+            # Build from source for PHP 8+
+            RUNKIT_INSTALLED=false; \
+            ;; \
+        *) \
+            RUNKIT_INSTALLED=false; \
+            ;; \
     esac; \
-    if pecl install runkit7-${RUNKIT_VERSION} 2>/dev/null; then \
+    \
+    # Build from source if PECL fails
+    if [ "$RUNKIT_INSTALLED" = false ]; then \
+        echo "Building runkit7 from source..."; \
+        cd /tmp && \
+        if [ "$PHP_VERSION" = "7.4" ]; then \
+            git clone --depth 1 --branch v4.0.0a4 https://github.com/runkit7/runkit7.git || \
+            git clone --depth 1 https://github.com/runkit7/runkit7.git; \
+        else \
+            git clone --depth 1 https://github.com/runkit7/runkit7.git; \
+        fi && \
+        cd runkit7 && \
+        phpize && \
+        ./configure && \
+        make -j$(nproc) && \
+        make install && \
+        RUNKIT_INSTALLED=true; \
+    fi; \
+    \
+    if [ "$RUNKIT_INSTALLED" = true ]; then \
         echo "extension=runkit7.so" > /usr/local/etc/php/conf.d/runkit7.ini; \
         echo "runkit.internal_override=1" >> /usr/local/etc/php/conf.d/runkit7.ini; \
     else \
